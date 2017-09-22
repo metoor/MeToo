@@ -22,6 +22,7 @@
 #include <WinSock2.h>
 #pragma comment(lib, "WS2_32.lib")
 #define HSocket SOCKET
+#define INVALID_ST INVALID_SOCKET
 
 #elif (MT_TARGET_PLATFORM == MT_PLATFORM_ANDROID)
 #include <error.h>
@@ -35,6 +36,7 @@
 #include <stdlib.h>			// for exit
 #include <string.h>			// for bzero
 #define HSocket int
+#define INVALID_ST 0
 #endif 
 
 NS_MT_BEGIN
@@ -52,6 +54,9 @@ namespace net {
 	{
 		NONE,
 		INIT_FAILED,
+		BIND_FAILED,
+		ACCEPT_FAILED,
+		LISTEN_FAILED,
 		UNKNOW
 	};
 
@@ -91,11 +96,11 @@ namespace net {
 		void closeConnect(HSocket socket);
 		bool IsError(HSocket socket);
 
-	protected:
-		//virtual bool init() = 0;
-		//virtual bool connect() = 0;
+		bool ipv4Init(struct sockaddr_in& sockAddr, HSocket& socketfd, const unsigned short port, const std::string& ip = "", int type = SOCK_STREAM);
+		bool ipv6Init(struct sockaddr_in6& sockAddr, HSocket& socketfd, const unsigned short port, const std::string& ip = "", int type = SOCK_STREAM);
 
 	protected:
+		// ready for child
 		std::mutex _mutex;
 
 	private:
@@ -103,7 +108,7 @@ namespace net {
 	};
 
 	/************************************************************************/
-	/*                              MTSocket					   		  */
+	/*                              MTServerTCP					   		  */
 	/************************************************************************/
 	class MTServerTCP : public MTSocket
 	{
@@ -116,34 +121,39 @@ namespace net {
 		void sendMessage(const char* data, int count);
 		void update(float dt);
 
-		std::function<void(const char* ip)> onStart;
+		std::function<void(const std::string& ip, const int port)> onStart;
 		std::function<void(HSocket socket)> onNewConnection;
 		std::function<void(HSocket socket, const char* data, int count)> onRecv;
 		std::function<void(HSocket socket)> onDisconnect;
+		std::function<void(ErrorType type, const std::string& des)> onError;
 
 	protected:
 		~MTServerTCP();
 
+		//deal with error
+		void _onError(ErrorType type, const std::string& des);
+
 	private:
 		MTServerTCP();
-		void clear();
 		bool initServer(unsigned short port);
 		void acceptClient();
 		void acceptFunc();
 		void newClientConnected(HSocket socket);
 		void recvMessage(HSocket socket);
+		void clear();
 
 	private:
-		struct ReciveData
+		struct RecvData
 		{
 			HSocket socketClient;
-			Data* data;
+			Data data;
 		};
 
 	private:
 		static MTServerTCP* _server;
 		HSocket _socketServer;
 		unsigned short _serverPort;
+		bool _isRunning;
 
 	private:
 		std::list<HSocket> _clientSockets;

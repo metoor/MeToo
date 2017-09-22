@@ -124,6 +124,36 @@ namespace net {
 		return socket < 0;
 #endif
 	}
+
+	bool MTSocket::ipv4Init(struct sockaddr_in& sockAddr, HSocket& socketfd, const unsigned short port, const std::string& ip, int type)
+	{
+		if (socketfd != INVALID_ST)
+		{
+			closeConnect(socketfd);
+		}
+		socketfd = socket(AF_INET, type, 0);
+		if (IsError(socketfd)) 
+		{
+			socketfd = INVALID_ST;
+			return false;
+		}
+
+		memset(&sockAddr, 0, sizeof(sockAddr));
+		sockAddr.sin_family = AF_INET;
+		sockAddr.sin_port = htons(port);
+		sockAddr.sin_addr.s_addr = ip.empty() ? htonl(INADDR_ANY): inet_addr(ip.c_str());
+		return true;
+	}
+
+	bool MTSocket::ipv6Init(struct sockaddr_in6& sockAddr, HSocket & socketfd, const unsigned short port, const std::string & ip, int type)
+	{
+		
+		return true;
+	}
+
+	/************************************************************************/
+	/*                              MTServerTCP					   		  */
+	/************************************************************************/
 	MTServerTCP * MTServerTCP::getInstance()
 	{
 		if (_server == nullptr)
@@ -132,17 +162,129 @@ namespace net {
 		}
 		return _server;
 	}
+
 	void MTServerTCP::destroyInstance()
 	{
 		MT_DELETE(_server);
 	}
 
-	MTServerTCP::MTServerTCP()
+	bool MTServerTCP::startServer(unsigned short port)
 	{
+		if (!initServer(port))
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	MTServerTCP::MTServerTCP()
+		: _socketServer(INVALID_ST)
+		, _serverPort(0)
+		, _isRunning(false)
+		, onStart(nullptr)
+		, onRecv(nullptr)
+		, onNewConnection(nullptr)
+		, onDisconnect(nullptr)
+	{
+	}
+
+	void MTServerTCP::clear()
+	{
+		if(_socketServer)
+		{
+			_mutex.lock();
+			this->closeConnect(_socketServer);
+			_mutex.unlock();
+		}
+
+		for (auto msg : _UIMessageQueue)
+		{
+			MT_DELETE(msg);
+		}
+		_UIMessageQueue.clear();
+	}
+
+	bool MTServerTCP::initServer(unsigned short port)
+	{
+		do{
+			int ret = 0;
+			struct sockaddr_in serverAddr;
+			ret = ipv4Init(serverAddr, _socketServer, port);
+			if (!ret)
+			{
+				_onError(ErrorType::INIT_FAILED, "socket init failed!");
+				break;
+			}
+
+			ret = bind(_socketServer, (const sockaddr*)&serverAddr, sizeof(serverAddr));
+			if (ret < 0)
+			{
+				_onError(ErrorType::BIND_FAILED, "socket bind failed!");
+				break;
+			}
+
+			ret = listen(_socketServer, 5);
+			if (ret < 0)
+			{
+				_onError(ErrorType::LISTEN_FAILED, "socket listen failed!");
+				break;
+			}
+
+			// start 
+			char hostName[256];
+			gethostname(hostName, sizeof(hostName));
+			struct hostent* hostInfo = gethostbyname(hostName);
+			char* ip = inet_ntoa(*(struct in_addr *)*hostInfo->h_addr_list);
+			
+			this->acceptClient();
+
+			if (onStart != nullptr)
+			{
+				log("start server!");
+				this->onStart(ip, port);
+			}
+
+			return true;
+		} while (false);
+
+		closeConnect(_socketServer);
+		_socketServer = 0;
+		return false;
+	}
+
+	void MTServerTCP::acceptClient()
+	{
+		std::thread th(&MTServerTCP::acceptFunc, this);
+		th.detach();
+	}
+
+	void MTServerTCP::acceptFunc()
+	{
+		int len = sizeof(sockaddr);
+		struct sockaddr_in sockAddr;
+		while (true)
+		{
+			HSocket clientSock = accept(_socketServer, (sockaddr*)&sockAddr, &len);
+			if (IsError(clientSock))
+			{
+				MTLOG("socket error: accept error!");
+			}
+			else
+			{
+				this->newClientConnected(clientSock);
+			}
+		}
 	}
 
 	MTServerTCP::~MTServerTCP()
 	{
+		clear();
+	}
+
+	void MTServerTCP::_onError(ErrorType type, const std::string & des)
+	{
+		MTLOG("socket error:" + des);
 	}
 }
 
