@@ -25,6 +25,9 @@
 //include utils function.
 #include "MTUtils.h"
 
+//net lib
+#include "../net/MTSocket.h"
+
 NS_MT_BEGIN
 
 const char* metooVersion();

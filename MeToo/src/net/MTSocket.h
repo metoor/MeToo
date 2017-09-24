@@ -2,7 +2,7 @@
 // Copyright (C), 2016-2017, CS&S. Co., Ltd.
 // File name: 	MTSocket.h
 // Author:		 Metoor
-// Version: 	1.0 
+// Version: 	1.0
 // Date: 		2017/09/21
 // Contact: 	caiyoufen@gmail.com
 // Description: 	create by vs2015pro
@@ -10,7 +10,7 @@
 
 #ifndef MTSOCKET_H_  
 #define MTSOCKET_H_  
-  
+
 #include "../base/MTMacros.h"
 #include "../base/MTData.h"
 #include "../base/MTConsole.h"
@@ -44,6 +44,7 @@ NS_MT_BEGIN
 namespace net {
 	enum MessageType
 	{
+		START,
 		DISCONNECT,
 		RECEIVE,
 		NEW_CONNECTION,
@@ -57,7 +58,30 @@ namespace net {
 		BIND_FAILED,
 		ACCEPT_FAILED,
 		LISTEN_FAILED,
+		SEND_FAILED,
+		RECV_FAILED,
+		CONNECT_FAILED,
 		UNKNOW
+	};
+
+	const unsigned int BUFFER_1K = 1024;
+	const std::string PROTO_HEAD = "com.metoo.metoor";
+
+	class Protocol {
+	public:
+		Protocol(const Data& data);
+		virtual ~Protocol();
+
+		inline std::size_t getSize() { return _length; };
+
+	protected:
+		//check the head is legal
+		virtual bool check();
+
+	private:
+		char _head[17];
+		std::size_t _length;
+		Data* _data;
 	};
 
 	/************************************************************************/
@@ -67,19 +91,19 @@ namespace net {
 	{
 	public:
 		//constructor
-		SocketMessage(MessageType type);
-		SocketMessage(ErrorType type);
-		SocketMessage(MessageType type, unsigned char* data, int dataLen);
+		SocketMessage(MessageType type, size_t extra = 0);
+		SocketMessage(MessageType type, const unsigned char* data, std::size_t dataLen, size_t extra = 0);
 		~SocketMessage();
 
 		//getter
 		inline const metoo::Data* getMsgData() { return _msgData; }
 		inline const MessageType& getMsgType() { return _msgType; }
-		inline const ErrorType& getErrorType() { return _errorType; }
+		inline const std::size_t getMsgExtra() { return _extra; }
+
 	private:
 		MessageType _msgType;
-		ErrorType _errorType;
 		metoo::Data* _msgData;
+		std::size_t _extra;		//save extar parameter
 	};
 
 	/************************************************************************/
@@ -117,13 +141,16 @@ namespace net {
 		void destroyInstance();
 
 		bool startServer(unsigned short port);
-		void sendMessage(HSocket socket, const char* data, int count);
-		void sendMessage(const char* data, int count);
+		void sendMessage(HSocket socket, const char* data, std::size_t count);
+		void sendMessage(const char* data, std::size_t count);
 		void update(float dt);
 
-		std::function<void(const std::string& ip, const int port)> onStart;
+		inline void setMsgUpdateInterval(unsigned int ms) { _msgUpdateInterval = ms; };
+		inline unsigned int getMsgUpdateInterval(unsigned int ms) { return _msgUpdateInterval; };
+
+		std::function<void(const char* ip, unsigned short port)> onStart;
 		std::function<void(HSocket socket)> onNewConnection;
-		std::function<void(HSocket socket, const char* data, int count)> onRecv;
+		std::function<void(HSocket socket, const char* data, std::size_t count)> onRecv;
 		std::function<void(HSocket socket)> onDisconnect;
 		std::function<void(ErrorType type, const std::string& des)> onError;
 
@@ -131,7 +158,7 @@ namespace net {
 		~MTServerTCP();
 
 		//deal with error
-		void _onError(ErrorType type, const std::string& des);
+		void _onError(ErrorType type, std::size_t extra = 0);
 
 	private:
 		MTServerTCP();
@@ -141,19 +168,25 @@ namespace net {
 		void newClientConnected(HSocket socket);
 		void recvMessage(HSocket socket);
 		void clear();
+		void mainLoop();
 
 	private:
 		struct RecvData
 		{
 			HSocket socketClient;
-			Data data;
+			int dataLen;
+			char data[BUFFER_1K];
 		};
 
 	private:
 		static MTServerTCP* _server;
 		HSocket _socketServer;
 		unsigned short _serverPort;
+		std::string _ip;
 		bool _isRunning;
+
+		//default time is 200ms
+		unsigned int _msgUpdateInterval;
 
 	private:
 		std::list<HSocket> _clientSockets;
@@ -161,8 +194,46 @@ namespace net {
 		std::mutex   _UIMessageQueueMutex;
 
 	};
+
+	/************************************************************************/
+	/*                              MTClientTCP					   		  */
+	/************************************************************************/
+	class MTClientTCP : public MTSocket
+	{
+
+	public:
+		static MTClientTCP* getInstance();
+		void destroyInstance();
+
+		bool connectServer(const char* serverIP, unsigned short port);
+		void sendMessage(const char* data, int count);
+
+		std::function<void(const char* data, int count)> onRecv;
+		std::function<void()> onDisconnect;
+
+		void update(float dt);
+
+	protected:
+		~MTClientTCP(void);
+		//deal with error
+		void _onError(ErrorType type, std::size_t extra = 0);
+
+	private:
+		MTClientTCP(void);
+		bool initClient();
+		void recvMessage();
+		void clear();
+
+	private:
+		std::string _serverIp;
+		unsigned short _port;
+		HSocket _socektClient;
+		static MTClientTCP* _client;
+		std::list<SocketMessage*> _UIMessageQueue;
+		std::mutex   _UIMessageQueueMutex;
+	};
 }
 
 NS_MT_END
-  
+
 #endif // MTSOCKET_H_ 

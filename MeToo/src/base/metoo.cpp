@@ -1,5 +1,5 @@
 /*************************************************
-// Copyright (C), 2016-2020, CS&S. Co., Ltd.
+// Copyright (C), 2016-2017, CS&S. Co., Ltd.
 // File name: 	metoo.cpp
 // Author:		 Metoor
 // Version: 	1.0 

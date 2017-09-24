@@ -1,5 +1,5 @@
 /*************************************************
-// Copyright (C), 2016-2020, CS&S. Co., Ltd.
+// Copyright (C), 2016-2017, CS&S. Co., Ltd.
 // File name: 	MTConsole.cpp
 // Author:		 Metoor
 // Version: 	1.0 
@@ -62,22 +62,22 @@ void log(const char * format, ...)
 
 void log(const std::string& str1)
 {
-	log("-string: %s", str1.c_str());
+	log("%s", str1.c_str());
 }
 
 void log(const int& i)
 {
-	log("-int: %d", i);
+	log("%d", i);
 }
 
 void log(const bool& b)
 {
-	log("-bool: %s", b ? "true" : "false");
+	log("%s", b ? "true" : "false");
 }
 
 void log(const float& f)
 {
-	log("-float: %lf", f);
+	log("%lf", f);
 }
 
 NS_MT_END
