@@ -178,6 +178,7 @@ namespace net {
 		, onRecv(nullptr)
 		, onNewConnection(nullptr)
 		, onDisconnect(nullptr)
+		, onError(nullptr)
 	{
 	}
 
@@ -204,7 +205,7 @@ namespace net {
 
 		_isRunning = true;
 
-		mainLoop();
+		messageLoop();
 
 		return true;
 	}
@@ -215,7 +216,7 @@ namespace net {
 		{
 			if (sock == socket)
 			{
-				int ret = send(socket, data, count, 0);
+				int ret = send(socket, data, (int)count, 0);
 				if (ret < 0)
 				{
 					std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
@@ -232,7 +233,7 @@ namespace net {
 	{
 		for (auto& socket : _clientSockets)
 		{
-			int ret = send(socket, data, count, 0);
+			int ret = send(socket, data, (int)count, 0);
 			if (ret < 0)
 			{
 				std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
@@ -241,6 +242,18 @@ namespace net {
 				_UIMessageQueue.push_back(msg);
 			}
 		}
+	}
+
+	std::list<HSocket>::iterator MTServerTCP::findSocket(HSocket socket)
+	{
+		std::list<HSocket>::iterator iter = _clientSockets.begin();
+		for (auto sct : _clientSockets)
+		{
+			if (sct == socket)
+				return iter;
+			++iter;
+		}
+		return _clientSockets.end();
 	}
 
 	void MTServerTCP::update(float dt)
@@ -280,7 +293,12 @@ namespace net {
 			if (onDisconnect)
 			{
 				auto data = msg->getMsgData();
-				onDisconnect(*((HSocket*)data->getBytes()));
+				HSocket clientSocket = *((HSocket*)data->getBytes());
+
+				//delete disconnect client socket
+				auto iter = findSocket(clientSocket);
+				_clientSockets.erase(iter);
+				onDisconnect(clientSocket);
 			}
 			break;
 		case MessageType::RECEIVE:
@@ -336,7 +354,7 @@ namespace net {
 		}
 
 		_mutex.lock();
-		this->closeConnect(socket);
+		closeConnect(socket);
 		if (onDisconnect != nullptr)
 		{
 			std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
@@ -351,7 +369,7 @@ namespace net {
 		if (_socketServer)
 		{
 			_mutex.lock();
-			this->closeConnect(_socketServer);
+			closeConnect(_socketServer);
 			_mutex.unlock();
 		}
 
@@ -362,14 +380,14 @@ namespace net {
 		_UIMessageQueue.clear();
 	}
 
-	void MTServerTCP::mainLoop()
+	void MTServerTCP::messageLoop()
 	{
 		MTLOG("info: server message loop started!");
 		acceptClient();
 		while (_isRunning)
 		{
 			update(0);
-			Sleep(_msgUpdateInterval);
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 		}
 	}
 
@@ -438,7 +456,7 @@ namespace net {
 			else
 			{
 				MTLOG("info: new client connected!");
-				this->newClientConnected(clientSock);
+				newClientConnected(clientSock);
 			}
 		}
 	}
@@ -465,37 +483,46 @@ namespace net {
 
 	void MTServerTCP::_onError(ErrorType type, std::size_t extra)
 	{
- 		std::string desc = "";
-
-		switch (type)
+		if (onError)
 		{
-		case ErrorType::NONE:
-			break;
-		case ErrorType::INIT_FAILED:
-			desc = "error: socket init failed!";
-			break;
-		case ErrorType::BIND_FAILED:
-			desc = "error: socket bind failed!";
-			break;
-		case ErrorType::ACCEPT_FAILED:
-			desc = "error: socket accept failed!";
-			break;
-		case ErrorType::LISTEN_FAILED:
-			desc = "error: socket listen failed!";
-			break;
-		case ErrorType::SEND_FAILED:
-			desc = StringUtils::format("error: socket send data to (%d) failed!", extra);
-			break;
-		case ErrorType::RECV_FAILED:
-			desc = StringUtils::format("error: socket recv data from (%d) failed!", extra);
-			break;
-		case ErrorType::UNKNOW:
-		default:
-			desc = "error: unknow error!";
-			break;
+			onError(type, extra);
 		}
 
-		MTLOG(desc);
+		if (METOO_DEBUG)
+		{
+
+			std::string desc = "";
+
+			switch (type)
+			{
+			case ErrorType::NONE:
+				break;
+			case ErrorType::INIT_FAILED:
+				desc = "error: socket init failed!";
+				break;
+			case ErrorType::BIND_FAILED:
+				desc = "error: socket bind failed!";
+				break;
+			case ErrorType::ACCEPT_FAILED:
+				desc = "error: socket accept failed!";
+				break;
+			case ErrorType::LISTEN_FAILED:
+				desc = "error: socket listen failed!";
+				break;
+			case ErrorType::SEND_FAILED:
+				desc = StringUtils::format("error: socket send data to (%d) failed!", extra);
+				break;
+			case ErrorType::RECV_FAILED:
+				desc = StringUtils::format("error: socket recv data from (%d) failed!", extra);
+				break;
+			case ErrorType::UNKNOW:
+			default:
+				desc = "error: unknow error!";
+				break;
+			}
+
+			MTLOG(desc);
+		}
 	}
 
 	/************************************************************************/
@@ -515,18 +542,112 @@ namespace net {
 		MT_DELETE(_client);
 	}
 
+	bool MTClientTCP::connectServer(const char * serverIP, unsigned short port, bool msgLoopIsAsyn)
+	{
+		_serverIp = serverIP;
+		_port = port;
+
+		if (!initClient())
+		{
+			return false;
+		}
+
+		_isRunning = true;
+
+		std::thread recvThread(&MTClientTCP::recvMessage, this);
+		recvThread.detach();
+
+		if (msgLoopIsAsyn)
+		{
+			std::thread messageLoopTh(&MTClientTCP::messageLoop, this);
+			messageLoopTh.detach();
+		}
+		else
+		{
+			messageLoop();
+		}
+
+		return true;
+	}
+
+	void MTClientTCP::sendMessage(const char * data, std::size_t count)
+	{
+		if (_socektClient != INVALID_ST)
+		{
+			int ret = send(_socektClient, data, (int)count, 0);
+			if (ret < 0)
+			{
+				_onError(ErrorType::SEND_FAILED);
+			}
+		}
+	}
+
 	MTClientTCP::MTClientTCP(void)
 		: _serverIp("")
 		, _port(0)
+		, _isRunning(false)
+		, onConnect(nullptr)
 		, onRecv(nullptr)
 		, onDisconnect(nullptr)
+		, onError(nullptr)
+		, _msgUpdateInterval(200)
 		, _socektClient(INVALID_ST)
 	{
 	}
 
+	void MTClientTCP::update(float dt)
+	{
+		if (_UIMessageQueue.size() == 0)
+		{
+			return;
+		}
+
+		_UIMessageQueueMutex.lock();
+
+		if (_UIMessageQueue.size() == 0)
+		{
+			_UIMessageQueueMutex.unlock();
+			return;
+		}
+
+		SocketMessage *msg = *(_UIMessageQueue.begin());
+		_UIMessageQueue.pop_front();
+
+		switch (msg->getMsgType())
+		{
+		case MessageType::START:
+			if (onConnect)
+			{
+				onConnect();
+			}
+			break;
+		case MessageType::DISCONNECT:
+			_isRunning = false;
+			if (onDisconnect)
+			{
+				onDisconnect();
+			}
+			break;
+		case MessageType::RECEIVE:
+			if (onRecv)
+			{
+				onRecv((const char*)msg->getMsgData()->getBytes(), msg->getMsgData()->getSize());
+			}
+			break;
+		case MessageType::INCORRECT:
+			break;
+		default:
+			break;
+		}
+
+		MT_DELETE(msg);
+		_UIMessageQueueMutex.unlock();
+	}
+
 	MTClientTCP::~MTClientTCP(void)
 	{
-		this->clear();
+		_isRunning = false;
+		clear();
 	}
 
 	void MTClientTCP::clear()
@@ -534,7 +655,7 @@ namespace net {
 		if (_socektClient != 0)
 		{
 			_mutex.lock();
-			this->closeConnect(_socektClient);
+			closeConnect(_socektClient);
 			_mutex.unlock();
 		}
 
@@ -544,6 +665,17 @@ namespace net {
 		}
 		_UIMessageQueue.clear();
 
+	}
+
+	void MTClientTCP::messageLoop()
+	{
+		MTLOG("client message loop start!");
+		while (_isRunning)
+		{
+			update(0);
+			std::this_thread::sleep_for(std::chrono::milliseconds(_msgUpdateInterval));
+		}
+		MTLOG("client message loop end!");
 	}
 
 	bool MTClientTCP::initClient()
@@ -577,9 +709,73 @@ namespace net {
 		return false;
 	}
 
-	void MTClientTCP::_onError(ErrorType type, std::size_t extra = 0)
+	void MTClientTCP::recvMessage()
 	{
-		MTLOG("error ...");
+		char recvBuf[BUFFER_1K];
+		int ret = 0;
+		while (true)
+		{
+			ret = recv(_socektClient, recvBuf, sizeof(recvBuf), 0);
+			if (ret < 0)
+			{
+				_onError(ErrorType::RECV_FAILED);
+				break;
+			}
+			if (ret > 0 && onRecv != nullptr)
+			{
+				std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
+				SocketMessage * msg = new SocketMessage(MessageType::RECEIVE, (unsigned char*)recvBuf, ret);
+				_UIMessageQueue.push_back(msg);
+			}
+		}
+
+		_mutex.lock();
+		closeConnect(_socektClient);
+		if (onDisconnect != nullptr)
+		{
+			std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
+			SocketMessage * msg = new SocketMessage(MessageType::DISCONNECT);
+			_UIMessageQueue.push_back(msg);
+		}
+		_socektClient = 0;
+		_mutex.unlock();
+	}
+
+	void MTClientTCP::_onError(ErrorType type, std::size_t extra)
+	{
+		if (onError)
+		{
+			onError(type, extra);
+		}
+
+		if (METOO_DEBUG)
+		{
+			std::string desc = "";
+
+			switch (type)
+			{
+			case ErrorType::NONE:
+				break;
+			case ErrorType::INIT_FAILED:
+				desc = "error: socket init failed!";
+				break;
+			case ErrorType::CONNECT_FAILED:
+				desc = StringUtils::format("error: socket connect server(%s:%d) failed!", _serverIp.c_str(), _port);
+				break;
+			case ErrorType::SEND_FAILED:
+				desc = "error: socket send data failed!";
+				break;
+			case ErrorType::RECV_FAILED:
+				desc = "error: socket recv data failed!";
+				break;
+			case ErrorType::UNKNOW:
+			default:
+				desc = "error: unknow error!";
+				break;
+			}
+
+			MTLOG(desc);
+		}
 	}
 }
 

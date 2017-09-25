@@ -17,6 +17,7 @@
 #include <list>
 #include <thread>
 #include <mutex>
+#include <chrono>
 
 #if (MT_TARGET_PLATFORM == MT_PLATFORM_WIN32)
 #include <WinSock2.h>
@@ -143,7 +144,7 @@ namespace net {
 		bool startServer(unsigned short port);
 		void sendMessage(HSocket socket, const char* data, std::size_t count);
 		void sendMessage(const char* data, std::size_t count);
-		void update(float dt);
+		std::list<HSocket>::iterator findSocket(HSocket socket);
 
 		inline void setMsgUpdateInterval(unsigned int ms) { _msgUpdateInterval = ms; };
 		inline unsigned int getMsgUpdateInterval(unsigned int ms) { return _msgUpdateInterval; };
@@ -152,24 +153,24 @@ namespace net {
 		std::function<void(HSocket socket)> onNewConnection;
 		std::function<void(HSocket socket, const char* data, std::size_t count)> onRecv;
 		std::function<void(HSocket socket)> onDisconnect;
-		std::function<void(ErrorType type, const std::string& des)> onError;
+		std::function<void(ErrorType type, std::size_t extra)> onError;
 
 	protected:
 		~MTServerTCP();
-
+		void update(float dt);
 		//deal with error
 		void _onError(ErrorType type, std::size_t extra = 0);
-
-	private:
-		MTServerTCP();
 		bool initServer(unsigned short port);
 		void acceptClient();
 		void acceptFunc();
 		void newClientConnected(HSocket socket);
 		void recvMessage(HSocket socket);
 		void clear();
-		void mainLoop();
+		void messageLoop();
 
+	private:
+		MTServerTCP();
+		
 	private:
 		struct RecvData
 		{
@@ -191,7 +192,7 @@ namespace net {
 	private:
 		std::list<HSocket> _clientSockets;
 		std::list<SocketMessage*> _UIMessageQueue;
-		std::mutex   _UIMessageQueueMutex;
+		std::mutex	_UIMessageQueueMutex;
 
 	};
 
@@ -205,16 +206,22 @@ namespace net {
 		static MTClientTCP* getInstance();
 		void destroyInstance();
 
-		bool connectServer(const char* serverIP, unsigned short port);
-		void sendMessage(const char* data, int count);
+		bool connectServer(const char* serverIP, unsigned short port, bool msgLoopIsAsyn = false);
+		void sendMessage(const char* data, std::size_t count);
 
-		std::function<void(const char* data, int count)> onRecv;
+		inline void setMsgUpdateInterval(unsigned int ms) { _msgUpdateInterval = ms; };
+		inline unsigned int getMsgUpdateInterval(unsigned int ms) { return _msgUpdateInterval; };
+
+		std::function<void()> onConnect;
+		std::function<void(const char* data, std::size_t count)> onRecv;
 		std::function<void()> onDisconnect;
+		std::function<void(ErrorType type, std::size_t extra)> onError;
 
 		void update(float dt);
 
 	protected:
 		~MTClientTCP(void);
+
 		//deal with error
 		void _onError(ErrorType type, std::size_t extra = 0);
 
@@ -223,11 +230,14 @@ namespace net {
 		bool initClient();
 		void recvMessage();
 		void clear();
+		void messageLoop();
 
 	private:
 		std::string _serverIp;
 		unsigned short _port;
 		HSocket _socektClient;
+		unsigned int _msgUpdateInterval;
+		bool _isRunning;
 		static MTClientTCP* _client;
 		std::list<SocketMessage*> _UIMessageQueue;
 		std::mutex   _UIMessageQueueMutex;

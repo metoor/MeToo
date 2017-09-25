@@ -9,7 +9,8 @@
 *************************************************/
 
 #include "../base/metoo.h"
-
+#include <iostream>
+using namespace std;
 USING_NS_MT;
 
 using namespace std;
@@ -47,35 +48,60 @@ void test_utils()
 	log("----------utils test end -----------");
 }
 
-#include <iostream>
-using namespace std;
+void test_mtsocket(bool isServer = true)
+{
+	//server thread
+	if (isServer)
+	{
+		auto server = metoo::net::MTServerTCP::getInstance();
+		server->onStart = [](const string& ip, unsigned short port) {
+			log("server started on ip:" + ip);
+		};
+
+		server->onDisconnect = [](SOCKET socket) {
+			cout << socket << " disconnect" << endl;
+		};
+
+		server->onNewConnection = [&server](SOCKET socket) {
+			cout << socket << " connected" << endl;
+			server->sendMessage(socket, "Wellcome connect!", 18);
+		};
+
+		server->onRecv = [&server](SOCKET socket, const char* data, int lenth) {
+			cout << " recv £º" << socket << " data£º" << data << endl;
+		};
+
+		server->startServer(6666);
+	}
+	else
+	{
+		auto client = net::MTClientTCP::getInstance();
+
+		client->onConnect = []() {
+			cout << "connect" << endl;
+		};
+
+		client->onDisconnect = []() {
+			cout << "disconnect" << endl;
+		};
+
+		client->onRecv = [&client](const char* data, int count) {
+			cout << "recv data:" << data << endl;
+			client->sendMessage("Thanks you!", 12);
+		};
+
+		bool s = client->connectServer("127.0.0.1", 6666, true);
+
+		getchar();
+	}
+}
 
 int main()
 {
 	log(metoo::metooVersion());
 
 	//test_utils();
-
-
-	auto server = metoo::net::MTServerTCP::getInstance();
-	server->onStart = [] (const string& ip, unsigned short port){
-		log("server started on ip:" + ip);
-	};
-
-	server->onDisconnect = [](SOCKET socket) {
-		cout << socket << " disconnect" << endl;
-	};
-
-	server->onNewConnection = [&server](SOCKET socket) {
-		cout << socket << " connected" << endl;
-		server->sendMessage(socket, "Wellcome connect!", 18);
-	};
-
-	server->onRecv = [&server](SOCKET socket, const char* data, int lenth) {
-		cout << " recv £º" << socket << " data£º" << data << endl;
-	};
-
-	server->startServer(6666);
+	test_mtsocket(false);
 
 	return 0;
 }
