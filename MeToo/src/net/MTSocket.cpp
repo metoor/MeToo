@@ -283,11 +283,18 @@ namespace net {
 			}
 			break;
 		case MessageType::NEW_CONNECTION:
+		{
+			//new thread for recv message
+			auto clientSocket = *((HSocket*)(msg->getMsgData()->getBytes()));
+			_clientSockets.push_back(clientSocket);
+			std::thread th(&MTServerTCP::recvMessage, this, clientSocket);
+			th.detach();
+
 			if (onNewConnection)
 			{
-				auto data = msg->getMsgData();
-				onNewConnection(*((HSocket*)data->getBytes()));
+				onNewConnection(clientSocket);
 			}
+		}
 			break;
 		case MessageType::DISCONNECT:
 			if (onDisconnect)
@@ -456,22 +463,10 @@ namespace net {
 			else
 			{
 				MTLOG("info: new client connected!");
-				newClientConnected(clientSock);
+				std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
+				SocketMessage * msg = new SocketMessage(NEW_CONNECTION, (unsigned char*)&clientSock, sizeof(HSocket));
+				_UIMessageQueue.push_back(msg);
 			}
-		}
-	}
-
-	void MTServerTCP::newClientConnected(HSocket socket)
-	{
-		_clientSockets.push_back(socket);
-		std::thread th(&MTServerTCP::recvMessage, this, socket);
-		th.detach();
-
-		if (onNewConnection)
-		{
-			std::lock_guard<std::mutex> lk(_UIMessageQueueMutex);
-			SocketMessage * msg = new SocketMessage(NEW_CONNECTION, (unsigned char*)&socket, sizeof(HSocket));
-			_UIMessageQueue.push_back(msg);
 		}
 	}
 
@@ -635,6 +630,10 @@ namespace net {
 			}
 			break;
 		case MessageType::INCORRECT:
+		{
+			auto type = msg->getMsgData()->getBytes();
+			_onError((*(ErrorType*)(type)), msg->getMsgExtra());
+		}
 			break;
 		default:
 			break;

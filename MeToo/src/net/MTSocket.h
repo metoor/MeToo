@@ -163,7 +163,6 @@ namespace net {
 		bool initServer(unsigned short port);
 		void acceptClient();
 		void acceptFunc();
-		void newClientConnected(HSocket socket);
 		void recvMessage(HSocket socket);
 		void clear();
 		void messageLoop();
